@@ -1,38 +1,34 @@
 const express = require('express');
-const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
 const cors = require('cors');
+const bodyParser = require('body-parser');
+require('dotenv').config();
+const fetch = require('node-fetch'); // For making API requests
 
-// Initialize the app
 const app = express();
 
-// Middleware
-app.use(cors());
+// CORS setup
+const corsOptions = {
+  origin: 'https://bakhoeleconsulting.com', // Replace with your website URL
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type'],
+};
+app.use(cors(corsOptions));
 app.use(bodyParser.json());
 
-// Endpoint for sending emails
+const PORT = process.env.PORT || 4000;
+
+// Route to handle contact form submissions
 app.post('/send-email', async (req, res) => {
-  const { name, email, phone, company, message } = req.body;
+  const { firstName, lastName, email, phone, company, message } = req.body;
 
-  if (!name || !email || !message) {
-    return res.status(400).json({ error: 'Missing required fields: name, email, or message' });
-  }
+  // Combine the sender's name
+  const name = `${firstName} ${lastName}`;
 
-  // Configure Nodemailer transporter
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    secure: process.env.SMTP_PORT === '465', // Use TLS for port 465
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  const mailOptions = {
-    from: process.env.SMTP_USER,
-    to: process.env.RECIPIENT_EMAIL, // Replace with your recipient email
-    subject: `New message from ${name} (${company || 'No company provided'})`,
+  // Email data for sending
+  const emailData = {
+    from: `${name} <${email}>`, // Sender's email (displayed as "from" in the email)
+    to: process.env.RECIPIENT_EMAIL, // Your email where messages will be delivered
+    subject: `New message from ${name} (${company || 'No company'})`,
     text: `
       Name: ${name}
       Email: ${email}
@@ -50,21 +46,36 @@ app.post('/send-email', async (req, res) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    res.status(200).json({ message: 'Email sent successfully!' });
+    // Make a request to Mailgun's API
+    const response = await fetch(`https://api.mailgun.net/v3/${process.env.MAILGUN_DOMAIN}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`api:${process.env.MAILGUN_API_KEY}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        from: emailData.from,
+        to: emailData.to,
+        subject: emailData.subject,
+        text: emailData.text,
+        html: emailData.html,
+      }),
+    });
+
+    if (response.ok) {
+      return res.status(200).json({ success: true, message: 'Message sent successfully!' });
+    } else {
+      const errorText = await response.text();
+      console.error('Mailgun error:', errorText);
+      return res.status(500).json({ success: false, message: 'Failed to send email' });
+    }
   } catch (error) {
     console.error('Error sending email:', error);
-    res.status(500).json({ error: 'Failed to send email. Please try again.' });
+    res.status(500).json({ success: false, message: 'Error sending email' });
   }
 });
 
-// Handle Vercel's default route
-app.get('/', (req, res) => {
-  res.send('Server is up and running!');
-});
-
 // Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-module.exports = app;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
